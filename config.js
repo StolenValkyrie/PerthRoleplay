@@ -21,10 +21,10 @@ module.exports = {
 
     // Which roles can see and manage each type of ticket
     types: {
-      general:     { label: 'General',     roleIds: [] },
-      supervisory: { label: 'Supervisory', roleIds: [] },
-      management:  { label: 'Management',  roleIds: [] },
-      directive:   { label: 'Directive',   roleIds: [] },
+      general:     { label: 'General',     1566066035189354590: [] },
+      supervisory: { label: 'Supervisory', 1566066035189354589: [] },
+      management:  { label: 'Management',  1566066035189354588: [] },
+      directive:   { label: 'Directive',   1566066035189354591: [] },
     },
   },
 };
