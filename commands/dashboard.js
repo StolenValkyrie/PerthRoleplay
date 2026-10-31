@@ -17,8 +17,8 @@ const TOP_IMAGE = 'https://cdn.phototourl.com/member/2026-10-31-7f539de2-0e56-41
 const BOTTOM_IMAGE = 'https://cdn.phototourl.com/member/2026-10-31-cdfc75cc-0456-4886-9a51-a14e1563d9bf.png';
 
 // Edit these two messages to whatever you want the buttons to show
-const RULES_TEXT = '# Rules\n1. Be respectful to everyone.\n2. No random killing or breaking character.\n3. Follow staff instructions.';
-const GAME_INFO_TEXT = '# Game Info\nAdd your game link, server details and other info here.';
+const RULES_TEXT = '# Rules\n- Be respectful to others, no harassment or hate speech.\n- No spamming or advertising.\n- Follow the Discord Community Guidelines and Terms of Service.\n- No NSFW content.\n- Use appropriate channels for discussions.';
+const GAME_INFO_TEXT = '# Game Info\n- No RDM, VDM, or GTA Driving, moderation will take place.\n- Follow PT\'s, announcements, and staff directions.\n- Real staff team members will have a car and a way to check on discord.';
 
 module.exports = {
   data: new SlashCommandBuilder()
