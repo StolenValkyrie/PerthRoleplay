@@ -214,16 +214,22 @@ function createTicket(key) {
 
         const now = Math.floor(Date.now() / 1000);
 
-        const pings = [
+        // Notify the ticket opener and every staff role configured for this type.
+        const pingRoleIds = [...new Set(
+            roleIds.filter(roleId => /^\d{17,20}$/.test(String(roleId)))
+        )];
+
+        const pingContent = [
             `<@${user.id}>`,
-            ...roleIds.map(roleId => `<@&${roleId}>`),
+            ...pingRoleIds.map(roleId => `<@&${roleId}>`),
         ].join(' ');
 
         await channel.send({
-            content: pings,
+            content: pingContent,
             allowedMentions: {
+                parse: [],
                 users: [user.id],
-                roles: roleIds,
+                roles: pingRoleIds,
             },
         });
 
