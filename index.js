@@ -21,6 +21,7 @@ if (!BOT_TOKEN || !CLIENT_ID || !GUILD_ID) {
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 client.commands = new Collection();
 client.buttons = new Collection();
+client.modals = new Collection();
 
 // Load every file in /commands
 const commandsPath = path.join(__dirname, 'commands');
@@ -28,10 +29,9 @@ for (const file of fs.readdirSync(commandsPath).filter((f) => f.endsWith('.js'))
   const command = require(path.join(commandsPath, file));
   if ('data' in command && 'execute' in command) {
     client.commands.set(command.data.name, command);
-    // Commands can also export button handlers: { customId: handler }
-    for (const [id, handler] of Object.entries(command.buttons ?? {})) {
-      client.buttons.set(id, handler);
-    }
+    // Commands can also export button and modal handlers: { customId: handler }
+    for (const [id, handler] of Object.entries(command.buttons ?? {})) client.buttons.set(id, handler);
+    for (const [id, handler] of Object.entries(command.modals ?? {})) client.modals.set(id, handler);
   } else {
     console.warn(`[WARN] ${file} is missing "data" or "execute".`);
   }
@@ -52,32 +52,37 @@ client.once(Events.ClientReady, async (c) => {
   } catch (err) {
     console.error('Failed to register commands:', err);
   }
+  // Let commands run start-up code (e.g. resume a running session)
+  for (const command of client.commands.values()) {
+    try {
+      await command.ready?.(c);
+    } catch (err) {
+      console.error(`ready() failed for /${command.data.name}:`, err);
+    }
+  }
 });
 
-client.on(Events.InteractionCreate, async (interaction) => {
-  if (interaction.isButton()) {
-    const handler = client.buttons.get(interaction.customId);
-    if (!handler) return;
-    try {
-      await handler(interaction);
-    } catch (err) {
-      console.error(err);
-    }
-    return;
-  }
-
-  if (!interaction.isChatInputCommand()) return;
-
-  const command = client.commands.get(interaction.commandName);
-  if (!command) return;
-
+async function run(interaction, handler) {
   try {
-    await command.execute(interaction);
+    await handler(interaction);
   } catch (err) {
     console.error(err);
-    const msg = { content: 'Something went wrong running that command.', flags: MessageFlags.Ephemeral };
-    if (interaction.replied || interaction.deferred) await interaction.followUp(msg);
-    else await interaction.reply(msg);
+    const msg = { content: 'Something went wrong. Please try again.', flags: MessageFlags.Ephemeral };
+    if (interaction.replied || interaction.deferred) await interaction.followUp(msg).catch(() => {});
+    else await interaction.reply(msg).catch(() => {});
+  }
+}
+
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (interaction.isChatInputCommand()) {
+    const command = client.commands.get(interaction.commandName);
+    if (command) await run(interaction, command.execute);
+  } else if (interaction.isButton()) {
+    const handler = client.buttons.get(interaction.customId);
+    if (handler) await run(interaction, handler);
+  } else if (interaction.isModalSubmit()) {
+    const handler = client.modals.get(interaction.customId);
+    if (handler) await run(interaction, handler);
   }
 });
 
