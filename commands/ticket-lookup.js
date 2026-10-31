@@ -139,7 +139,7 @@ function buildLog(t) {
 }
 
 async function sendLog(client, ticket) {
-  const channelId = config.tickets.logChannelId;
+  const channelId = 1566066040755196020; // config.tickets.logChannelId;
   if (!channelId) return console.warn('[tickets] tickets.logChannelId is not set in config.js, so nothing was logged.');
   try {
     const channel = await client.channels.fetch(channelId);
