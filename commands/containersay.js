@@ -1,3 +1,4 @@
+
 const {
   SlashCommandBuilder,
   PermissionFlagsBits,
@@ -27,17 +28,24 @@ module.exports = {
       PermissionFlagsBits.ManageMessages
     ),
 
-async execute(interaction) {
+  async execute(interaction) {
     const content = interaction.options.getString('message');
     const container = createContainer(content);
 
-return interaction.reply({
+    // Private acknowledgement
+    await interaction.deferReply({ ephemeral: true });
+
+    // Send standalone container message
+    await interaction.channel.send({
       components: [container],
       flags: MessageFlags.IsComponentsV2,
     });
+
+    // Remove private acknowledgement
+    return interaction.deleteReply();
   },
 
-async prefix(message, args) {
+  async prefix(message, args) {
     if (!message.member.permissions.has(
       PermissionFlagsBits.ManageMessages
     )) {
@@ -48,17 +56,21 @@ async prefix(message, args) {
 
     const content = args.join(' ').trim();
 
-if (!content) {
+    if (!content) {
       return message.reply(
         'Usage: `^containersay <message>`'
       );
     }
 
-const container = createContainer(content);
+    const container = createContainer(content);
 
-return message.channel.send({
+    // Send container first
+    await message.channel.send({
       components: [container],
       flags: MessageFlags.IsComponentsV2,
     });
+
+    // Delete original command
+    return message.delete().catch(() => null);
   },
 };
