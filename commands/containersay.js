@@ -35,13 +35,16 @@ module.exports = {
     // Private acknowledgement
     await interaction.deferReply({ ephemeral: true });
 
-    // Send standalone container message
+    // Send standalone container with all mentions enabled
     await interaction.channel.send({
       components: [container],
       flags: MessageFlags.IsComponentsV2,
+      allowedMentions: {
+        parse: ['everyone', 'roles', 'users'],
+        repliedUser: false,
+      },
     });
 
-    // Remove private acknowledgement
     return interaction.deleteReply();
   },
 
@@ -64,13 +67,17 @@ module.exports = {
 
     const container = createContainer(content);
 
-    // Send container first
+    // Send standalone container with all mentions enabled
     await message.channel.send({
       components: [container],
       flags: MessageFlags.IsComponentsV2,
+      allowedMentions: {
+        parse: ['everyone', 'roles', 'users'],
+        repliedUser: false,
+      },
     });
 
-    // Delete original command
+    // Delete original prefix command
     return message.delete().catch(() => null);
   },
 };

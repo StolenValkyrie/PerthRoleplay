@@ -21,16 +21,19 @@ module.exports = {
   async execute(interaction) {
     const content = interaction.options.getString('message');
 
-    // Acknowledge privately so no public command reply appears.
+    // Private acknowledgement
     await interaction.deferReply({ ephemeral: true });
 
-    // Send a separate message as the bot.
+    // Send standalone message with all mentions enabled
     await interaction.channel.send({
       content,
-      allowedMentions: { parse: [] },
+      allowedMentions: {
+        parse: ['everyone', 'roles', 'users'],
+        repliedUser: false,
+      },
     });
 
-    // Hide the private acknowledgement.
+    // Remove private acknowledgement
     return interaction.deleteReply();
   },
 
@@ -49,13 +52,16 @@ module.exports = {
       return message.reply('Usage: `^say <message>`');
     }
 
-    // Send the bot's message first.
+    // Send standalone message with all mentions enabled
     await message.channel.send({
       content,
-      allowedMentions: { parse: [] },
+      allowedMentions: {
+        parse: ['everyone', 'roles', 'users'],
+        repliedUser: false,
+      },
     });
 
-    // Delete the original ^say command.
+    // Delete original command
     return message.delete().catch(() => null);
   },
 };
