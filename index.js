@@ -8,6 +8,7 @@ const {
   REST,
   Routes,
   Events,
+  MessageFlags,
 } = require("discord.js");
 
 const fs = require("node:fs");
@@ -18,14 +19,22 @@ const path = require("node:path");
 // ==========================================
 
 const PREFIX = "^";
-const TOKEN = process.env.DISCORD_TOKEN;
-const CLIENT_ID = process.env.CLIENT_ID;
-const GUILD_ID = process.env.GUILD_ID;
+
+const TOKEN = process.env.DISCORD_TOKEN?.trim();
+const CLIENT_ID = process.env.CLIENT_ID?.trim();
+const GUILD_ID = process.env.GUILD_ID?.trim();
+
+console.log("[ENV CHECK]", {
+  tokenLoaded: !!TOKEN,
+  clientIdLoaded: !!CLIENT_ID,
+  guildIdLoaded: !!GUILD_ID,
+});
 
 if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
-  throw new Error(
-    "Missing DISCORD_TOKEN, CLIENT_ID, or GUILD_ID in your .env file."
+  console.error(
+    "[ENV ERROR] Missing DISCORD_TOKEN, CLIENT_ID, or GUILD_ID."
   );
+  process.exit(1);
 }
 
 // ==========================================
@@ -58,44 +67,54 @@ const commandFiles = fs
   .readdirSync(commandsPath)
   .filter((file) => file.endsWith(".js"));
 
+console.log(`[COMMAND LOADER] Found ${commandFiles.length} commands.`);
+
 for (const file of commandFiles) {
   const filePath = path.join(commandsPath, file);
 
-  delete require.cache[require.resolve(filePath)];
+  try {
+    delete require.cache[require.resolve(filePath)];
 
-  const command = require(filePath);
+    const command = require(filePath);
 
-  if (!command.data?.name || typeof command.execute !== "function") {
-    console.warn(`[COMMAND] Skipped invalid command: ${file}`);
-    continue;
-  }
-
-  client.commands.set(command.data.name, command);
-
-  // Register buttons
-  if (command.buttons) {
-    const buttons = command.buttons instanceof Map
-      ? command.buttons
-      : Object.entries(command.buttons);
-
-    for (const [customId, handler] of buttons) {
-      client.buttons.set(customId, handler);
+    if (!command.data?.name || typeof command.execute !== "function") {
+      console.warn(`[COMMAND] Skipped invalid command: ${file}`);
+      continue;
     }
-  }
 
-  // Register modals
-  if (command.modals) {
-    const modals = command.modals instanceof Map
-      ? command.modals
-      : Object.entries(command.modals);
+    client.commands.set(command.data.name, command);
 
-    for (const [customId, handler] of modals) {
-      client.modals.set(customId, handler);
+    // Register buttons
+    if (command.buttons) {
+      const buttons = command.buttons instanceof Map
+        ? command.buttons
+        : Object.entries(command.buttons);
+
+      for (const [customId, handler] of buttons) {
+        client.buttons.set(customId, handler);
+      }
     }
-  }
 
-  console.log(`[COMMAND] Loaded ${command.data.name}`);
+    // Register modals
+    if (command.modals) {
+      const modals = command.modals instanceof Map
+        ? command.modals
+        : Object.entries(command.modals);
+
+      for (const [customId, handler] of modals) {
+        client.modals.set(customId, handler);
+      }
+    }
+
+    console.log(`[LOADED] /${command.data.name}`);
+  } catch (error) {
+    console.error(`[COMMAND LOAD ERROR] ${file}:`, error);
+  }
 }
+
+console.log(
+  `[COMMAND LOADER] Successfully loaded ${client.commands.size} commands.`
+);
 
 // ==========================================
 // SLASH COMMAND REGISTRATION
@@ -117,7 +136,7 @@ async function registerSlashCommands() {
 }
 
 // ==========================================
-// SLASH COMMAND HANDLER
+// INTERACTION HANDLER
 // ==========================================
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -151,17 +170,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
   } catch (error) {
     console.error("[INTERACTION ERROR]", error);
 
+    if (!interaction.isRepliable()) return;
+
     const response = {
       content: "Something went wrong while processing this interaction.",
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     };
 
-    if (interaction.isRepliable()) {
-      if (interaction.deferred || interaction.replied) {
-        await interaction.followUp(response).catch(() => {});
-      } else {
-        await interaction.reply(response).catch(() => {});
-      }
+    if (interaction.deferred || interaction.replied) {
+      await interaction.followUp(response).catch(() => {});
+    } else {
+      await interaction.reply(response).catch(() => {});
     }
   }
 });
@@ -185,7 +204,6 @@ client.on(Events.MessageCreate, async (message) => {
 
   if (!command) return;
 
-  // Every command must have its own prefix handler.
   if (typeof command.prefix !== "function") {
     await message.reply(
       `The \`${commandName}\` command does not support prefix usage yet.`
@@ -209,7 +227,7 @@ client.on(Events.MessageCreate, async (message) => {
 // ==========================================
 
 client.once(Events.ClientReady, async (readyClient) => {
-  console.log(`Logged in as ${readyClient.user.tag}`);
+  console.log(`[READY] Logged in as ${readyClient.user.tag}`);
 
   for (const [name, command] of client.commands) {
     if (typeof command.ready === "function") {
@@ -229,7 +247,12 @@ client.once(Events.ClientReady, async (readyClient) => {
 
 async function startBot() {
   try {
+    console.log("[STARTUP] Registering slash commands...");
+
     await registerSlashCommands();
+
+    console.log("[STARTUP] Connecting to Discord...");
+
     await client.login(TOKEN);
   } catch (error) {
     console.error("[STARTUP ERROR]", error);
