@@ -20,7 +20,7 @@ const path = require("node:path");
 
 const PREFIX = "^";
 
-const TOKEN = process.env.DISCORD_TOKEN?.trim();
+const TOKEN = process.env.BOT_TOKEN?.trim();
 const CLIENT_ID = process.env.CLIENT_ID?.trim();
 const GUILD_ID = process.env.GUILD_ID?.trim();
 
@@ -32,7 +32,7 @@ console.log("[ENV CHECK]", {
 
 if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
   console.error(
-    "[ENV ERROR] Missing DISCORD_TOKEN, CLIENT_ID, or GUILD_ID."
+    "[ENV ERROR] Missing BOT_TOKEN, CLIENT_ID, or GUILD_ID."
   );
   process.exit(1);
 }
