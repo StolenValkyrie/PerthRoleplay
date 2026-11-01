@@ -1,30 +1,43 @@
 
-require('dotenv').config();
-
-const fs = require('node:fs');
-const path = require('node:path');
+require("dotenv").config();
 
 const {
-    Client,
-    Collection,
-    Events,
-    GatewayIntentBits,
-    MessageFlags,
-    REST,
-    Routes,
-} = require('discord.js');
+  Client,
+  GatewayIntentBits,
+  Collection,
+  REST,
+  Routes,
+  Events,
+} = require("discord.js");
 
-const { BOT_TOKEN, CLIENT_ID, GUILD_ID } = process.env;
+const fs = require("node:fs");
+const path = require("node:path");
 
-// Validate environment variables
-if (!BOT_TOKEN || !CLIENT_ID || !GUILD_ID) {
-    console.error('[ERROR] Missing BOT_TOKEN, CLIENT_ID or GUILD_ID.');
-    process.exit(1);
+// ==========================================
+// CONFIGURATION
+// ==========================================
+
+const PREFIX = "^";
+const TOKEN = process.env.DISCORD_TOKEN;
+const CLIENT_ID = process.env.CLIENT_ID;
+const GUILD_ID = process.env.GUILD_ID;
+
+if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
+  throw new Error(
+    "Missing DISCORD_TOKEN, CLIENT_ID, or GUILD_ID in your .env file."
+  );
 }
 
-// Create Discord client
+// ==========================================
+// CLIENT
+// ==========================================
+
 const client = new Client({
-    intents: [GatewayIntentBits.Guilds],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ],
 });
 
 client.commands = new Collection();
@@ -32,183 +45,196 @@ client.buttons = new Collection();
 client.modals = new Collection();
 
 // ==========================================
-// LOAD ALL COMMANDS
+// COMMAND LOADER
 // ==========================================
 
-function loadCommands() {
-    const commandsPath = path.join(__dirname, 'commands');
+const commandsPath = path.join(__dirname, "commands");
 
-    if (!fs.existsSync(commandsPath)) {
-        console.error('[ERROR] Commands folder not found!');
-        process.exit(1);
+if (!fs.existsSync(commandsPath)) {
+  throw new Error("The commands folder was not found.");
+}
+
+const commandFiles = fs
+  .readdirSync(commandsPath)
+  .filter((file) => file.endsWith(".js"));
+
+for (const file of commandFiles) {
+  const filePath = path.join(commandsPath, file);
+
+  delete require.cache[require.resolve(filePath)];
+
+  const command = require(filePath);
+
+  if (!command.data?.name || typeof command.execute !== "function") {
+    console.warn(`[COMMAND] Skipped invalid command: ${file}`);
+    continue;
+  }
+
+  client.commands.set(command.data.name, command);
+
+  // Register buttons
+  if (command.buttons) {
+    const buttons = command.buttons instanceof Map
+      ? command.buttons
+      : Object.entries(command.buttons);
+
+    for (const [customId, handler] of buttons) {
+      client.buttons.set(customId, handler);
     }
+  }
 
-    const files = fs.readdirSync(commandsPath)
-        .filter(file => file.endsWith('.js'));
+  // Register modals
+  if (command.modals) {
+    const modals = command.modals instanceof Map
+      ? command.modals
+      : Object.entries(command.modals);
 
-    console.log(`\n[COMMAND LOADER] Found ${files.length} command files.\n`);
-
-    for (const file of files) {
-        const filePath = path.join(commandsPath, file);
-
-        try {
-            // Load command file
-            const command = require(filePath);
-
-            // Validate command
-            if (!command.data || !command.execute) {
-                console.warn(`[SKIPPED] ${file} - Missing data or execute.`);
-                continue;
-            }
-
-            const commandName = command.data.name;
-
-            // Check duplicate command names
-            if (client.commands.has(commandName)) {
-                console.warn(`[SKIPPED] ${file} - Duplicate command: ${commandName}`);
-                continue;
-            }
-
-            // Register command locally
-            client.commands.set(commandName, command);
-
-            // Load button handlers
-            for (const [id, handler] of Object.entries(command.buttons || {})) {
-                client.buttons.set(id, handler);
-            }
-
-            // Load modal handlers
-            for (const [id, handler] of Object.entries(command.modals || {})) {
-                client.modals.set(id, handler);
-            }
-
-            console.log(`[LOADED] /${commandName} (${file})`);
-
-        } catch (error) {
-            console.error(`[ERROR] Failed to load ${file}:`, error);
-        }
+    for (const [customId, handler] of modals) {
+      client.modals.set(customId, handler);
     }
+  }
 
-    console.log(`\n[COMMAND LOADER] Successfully loaded ${client.commands.size} commands.\n`);
+  console.log(`[COMMAND] Loaded ${command.data.name}`);
 }
 
 // ==========================================
-// REGISTER COMMANDS TO DISCORD
+// SLASH COMMAND REGISTRATION
 // ==========================================
 
-async function registerCommands() {
-    const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
+const rest = new REST({ version: "10" }).setToken(TOKEN);
 
-    const commands = client.commands.map(command =>
-        command.data.toJSON()
-    );
+async function registerSlashCommands() {
+  const commands = client.commands.map((command) =>
+    command.data.toJSON()
+  );
 
-    console.log(`[REGISTER] Registering ${commands.length} commands...`);
+  await rest.put(
+    Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+    { body: commands }
+  );
 
-    await rest.put(
-        Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-        { body: commands }
-    );
-
-    console.log(`[SUCCESS] Registered ${commands.length} commands to guild ${GUILD_ID}.`);
+  console.log(`[SLASH] Registered ${commands.length} commands.`);
 }
 
 // ==========================================
-// ERROR HANDLING
+// SLASH COMMAND HANDLER
 // ==========================================
 
-async function run(interaction, handler) {
-    try {
-        await handler(interaction);
-    } catch (error) {
-        console.error('[COMMAND ERROR]', error);
-
-        const response = {
-            content: 'Something went wrong while executing this command.',
-            flags: MessageFlags.Ephemeral,
-        };
-
-        if (interaction.replied || interaction.deferred) {
-            await interaction.followUp(response).catch(() => {});
-        } else {
-            await interaction.reply(response).catch(() => {});
-        }
-    }
-}
-
-// ==========================================
-// INTERACTION HANDLER
-// ==========================================
-
-client.on(Events.InteractionCreate, async interaction => {
-
-    // Slash commands
+client.on(Events.InteractionCreate, async (interaction) => {
+  try {
     if (interaction.isChatInputCommand()) {
-        const command = client.commands.get(interaction.commandName);
+      const command = client.commands.get(interaction.commandName);
 
-        if (!command) {
-            console.warn(`[UNKNOWN COMMAND] ${interaction.commandName}`);
-            return;
-        }
+      if (!command) return;
 
-        await run(interaction, command.execute);
+      await command.execute(interaction);
+      return;
     }
 
-    // Buttons
-    else if (interaction.isButton()) {
-        const handler = client.buttons.get(interaction.customId);
+    if (interaction.isButton()) {
+      const handler = client.buttons.get(interaction.customId);
 
-        if (handler) {
-            await run(interaction, handler);
-        }
+      if (handler) {
+        await handler(interaction);
+      }
+
+      return;
     }
 
-    // Modals
-    else if (interaction.isModalSubmit()) {
-        const handler = client.modals.get(interaction.customId);
+    if (interaction.isModalSubmit()) {
+      const handler = client.modals.get(interaction.customId);
 
-        if (handler) {
-            await run(interaction, handler);
-        }
+      if (handler) {
+        await handler(interaction);
+      }
     }
+  } catch (error) {
+    console.error("[INTERACTION ERROR]", error);
+
+    const response = {
+      content: "Something went wrong while processing this interaction.",
+      ephemeral: true,
+    };
+
+    if (interaction.isRepliable()) {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.followUp(response).catch(() => {});
+      } else {
+        await interaction.reply(response).catch(() => {});
+      }
+    }
+  }
 });
 
 // ==========================================
-// BOT READY
+// PREFIX COMMAND HANDLER
 // ==========================================
 
-client.once(Events.ClientReady, async (c) => {
-    console.log('\n================================');
-    console.log(`Logged in as ${c.user.tag}`);
-    console.log('================================\n');
+client.on(Events.MessageCreate, async (message) => {
+  if (message.author.bot || !message.guild) return;
+  if (!message.content.startsWith(PREFIX)) return;
 
-    try {
-        await registerCommands();
-    } catch (error) {
-        console.error('[REGISTER ERROR]', error);
+  const content = message.content.slice(PREFIX.length).trim();
+
+  if (!content) return;
+
+  const args = content.split(/\s+/);
+  const commandName = args.shift().toLowerCase();
+
+  const command = client.commands.get(commandName);
+
+  if (!command) return;
+
+  // Every command must have its own prefix handler.
+  if (typeof command.prefix !== "function") {
+    await message.reply(
+      `The \`${commandName}\` command does not support prefix usage yet.`
+    );
+    return;
+  }
+
+  try {
+    await command.prefix(message, args);
+  } catch (error) {
+    console.error(`[PREFIX ERROR: ${commandName}]`, error);
+
+    await message.reply(
+      "Something went wrong while running that command."
+    ).catch(() => {});
+  }
+});
+
+// ==========================================
+// READY EVENT
+// ==========================================
+
+client.once(Events.ClientReady, async (readyClient) => {
+  console.log(`Logged in as ${readyClient.user.tag}`);
+
+  for (const [name, command] of client.commands) {
+    if (typeof command.ready === "function") {
+      try {
+        await command.ready(client);
+        console.log(`[READY] Started ${name}`);
+      } catch (error) {
+        console.error(`[READY ERROR: ${name}]`, error);
+      }
     }
-
-    // Run optional startup functions
-    for (const command of client.commands.values()) {
-        if (typeof command.ready === 'function') {
-            try {
-                await command.ready(c);
-                console.log(`[READY] /${command.data.name}`);
-            } catch (error) {
-                console.error(`[READY ERROR] /${command.data.name}:`, error);
-            }
-        }
-    }
-
-    console.log('\n[BOT] Startup complete.\n');
+  }
 });
 
 // ==========================================
 // START BOT
 // ==========================================
 
-loadCommands();
+async function startBot() {
+  try {
+    await registerSlashCommands();
+    await client.login(TOKEN);
+  } catch (error) {
+    console.error("[STARTUP ERROR]", error);
+    process.exit(1);
+  }
+}
 
-client.login(BOT_TOKEN).catch(error => {
-    console.error('[LOGIN ERROR]', error);
-});
+startBot();
