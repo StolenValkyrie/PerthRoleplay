@@ -1,11 +1,15 @@
 
-const { MessageFlags, SlashCommandBuilder } = require('discord.js');
+const {
+    MessageFlags,
+    PermissionFlagsBits,
+    SlashCommandBuilder,
+} = require('discord.js');
 
 const {
-  loadTickets,
-  findByChannel,
-  canManage,
-  closeTicket,
+    loadTickets,
+    findByChannel,
+    canManage,
+    closeTicket,
 } = require('../lib/tickets');
 
 // ==========================================
@@ -13,31 +17,32 @@ const {
 // ==========================================
 
 const reply = (interaction, content) =>
-  interaction.reply({
-    content,
-    flags: MessageFlags.Ephemeral,
-    allowedMentions: { parse: [] },
-  });
+    interaction.reply({
+        content,
+        flags: MessageFlags.Ephemeral,
+        allowedMentions: { parse: [] },
+    });
 
 // ==========================================
 // PREFIX USER RESOLVER
 // ==========================================
 
 async function resolveUser(message, argument) {
-  const mentionedUser = message.mentions.users.first();
+    const mentionedUser = message.mentions.users.first();
 
-  if (mentionedUser) return mentionedUser;
-  if (!argument) return null;
+    if (mentionedUser) return mentionedUser;
 
-  const userId = argument.replace(/[<@!>]/g, '');
+    if (!argument) return null;
 
-  if (!/^\d{17,20}$/.test(userId)) return null;
+    const userId = argument.replace(/[<@!>]/g, '');
 
-  try {
-    return await message.client.users.fetch(userId);
-  } catch {
-    return null;
-  }
+    if (!/^\d{17,20}$/.test(userId)) return null;
+
+    try {
+        return await message.client.users.fetch(userId);
+    } catch {
+        return null;
+    }
 }
 
 // ==========================================
@@ -45,14 +50,17 @@ async function resolveUser(message, argument) {
 // ==========================================
 
 function hasTicketPermission(member, ticket, subcommand, userId) {
-  const staff = canManage(member, ticket);
+    const staff = canManage(member, ticket);
 
-  // Ticket opener can only close their own ticket.
-  if (!staff && !(subcommand === 'close' && ticket.openerId === userId)) {
-    return false;
-  }
+    // The opener can only close their own ticket.
+    if (
+        !staff &&
+        !(subcommand === 'close' && ticket.openerId === userId)
+    ) {
+        return false;
+    }
 
-  return true;
+    return true;
 }
 
 // ==========================================
@@ -60,214 +68,237 @@ function hasTicketPermission(member, ticket, subcommand, userId) {
 // ==========================================
 
 module.exports = {
-  data: new SlashCommandBuilder()
-    .setName('ticket')
-    .setDescription('Manage the ticket you are in')
+    data: new SlashCommandBuilder()
+        .setName('ticket')
+        .setDescription('Manage the ticket you are in')
 
-    .addSubcommand((s) =>
-      s
-        .setName('add')
-        .setDescription('Add a member to this ticket')
-        .addUserOption((o) =>
-          o
-            .setName('user')
-            .setDescription('Member to add')
-            .setRequired(true)
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('add')
+                .setDescription('Add a member to this ticket')
+                .addUserOption(option =>
+                    option
+                        .setName('user')
+                        .setDescription('Member to add')
+                        .setRequired(true)
+                )
         )
-    )
 
-    .addSubcommand((s) =>
-      s
-        .setName('remove')
-        .setDescription('Remove a member from this ticket')
-        .addUserOption((o) =>
-          o
-            .setName('user')
-            .setDescription('Member to remove')
-            .setRequired(true)
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('remove')
+                .setDescription('Remove a member from this ticket')
+                .addUserOption(option =>
+                    option
+                        .setName('user')
+                        .setDescription('Member to remove')
+                        .setRequired(true)
+                )
         )
-    )
 
-    .addSubcommand((s) =>
-      s
-        .setName('close')
-        .setDescription('Close this ticket')
-        .addStringOption((o) =>
-          o
-            .setName('reason')
-            .setDescription('Reason for closing')
-        )
-    ),
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('close')
+                .setDescription('Close this ticket')
+                .addStringOption(option =>
+                    option
+                        .setName('reason')
+                        .setDescription('Reason for closing')
+                        .setMaxLength(500)
+                )
+        ),
 
-  // ========================================
-  // SLASH COMMAND
-  // ========================================
+    // ========================================
+    // SLASH COMMAND
+    // ========================================
 
-  async execute(interaction) {
-    const ticket = findByChannel(
-      loadTickets(),
-      interaction.channelId
-    );
-
-    if (!ticket) {
-      return reply(interaction, 'Use this inside an open ticket.');
-    }
-
-    const sub = interaction.options.getSubcommand();
-
-    if (!hasTicketPermission(
-      interaction.member,
-      ticket,
-      sub,
-      interaction.user.id
-    )) {
-      return reply(interaction, 'You do not have permission to do that.');
-    }
-
-    // CLOSE
-    if (sub === 'close') {
-      const reason = interaction.options.getString('reason') ?? '';
-
-      await interaction.reply(
-        'Saving the transcript and closing this ticket...'
-      );
-
-      return closeTicket(interaction, ticket, reason);
-    }
-
-    const user = interaction.options.getUser('user');
-
-    // ADD
-    if (sub === 'add') {
-      await interaction.channel.permissionOverwrites.edit(user.id, {
-        ViewChannel: true,
-        SendMessages: true,
-        ReadMessageHistory: true,
-        AttachFiles: true,
-      });
-
-      return interaction.reply({
-        content: `Added <@${user.id}> to this ticket.`,
-        allowedMentions: { users: [user.id] },
-      });
-    }
-
-    // REMOVE
-    if (sub === 'remove') {
-      if (user.id === ticket.openerId) {
-        return reply(
-          interaction,
-          'You cannot remove the person who opened the ticket.'
+    async execute(interaction) {
+        const ticket = findByChannel(
+            loadTickets(),
+            interaction.channelId
         );
-      }
 
-      await interaction.channel.permissionOverwrites.delete(user.id);
+        if (!ticket) {
+            return reply(
+                interaction,
+                'Use this command inside an open ticket.'
+            );
+        }
 
-      return interaction.reply({
-        content: `Removed <@${user.id}> from this ticket.`,
-        allowedMentions: { parse: [] },
-      });
-    }
-  },
+        const sub = interaction.options.getSubcommand();
 
-  // ========================================
-  // PREFIX COMMAND
-  // ========================================
+        if (!hasTicketPermission(
+            interaction.member,
+            ticket,
+            sub,
+            interaction.user.id
+        )) {
+            return reply(
+                interaction,
+                'You do not have permission to do that.'
+            );
+        }
 
-  async prefix(message, args) {
-    const ticket = findByChannel(
-      loadTickets(),
-      message.channel.id
-    );
+        // CLOSE
+        if (sub === 'close') {
+            const reason =
+                interaction.options.getString('reason') ?? '';
 
-    if (!ticket) {
-      return message.reply(
-        'Use this command inside an open ticket.'
-      );
-    }
+            await interaction.reply({
+                content: 'Saving the transcript and closing this ticket...',
+                flags: MessageFlags.Ephemeral,
+            });
 
-    const sub = args[0]?.toLowerCase();
+            return closeTicket(interaction, ticket, reason);
+        }
 
-    if (!sub || !['add', 'remove', 'close'].includes(sub)) {
-      return message.reply(
-        'Ticket commands:\n' +
-        '`^ticket add @user`\n' +
-        '`^ticket remove @user`\n' +
-        '`^ticket close [reason]`'
-      );
-    }
+        const user = interaction.options.getUser('user');
 
-    if (!hasTicketPermission(
-      message.member,
-      ticket,
-      sub,
-      message.author.id
-    )) {
-      return message.reply(
-        'You do not have permission to do that.'
-      );
-    }
+        // ADD
+        if (sub === 'add') {
+            await interaction.channel.permissionOverwrites.edit(
+                user.id,
+                {
+                    ViewChannel: true,
+                    SendMessages: true,
+                    ReadMessageHistory: true,
+                    AttachFiles: true,
+                }
+            );
 
-    // CLOSE
-    if (sub === 'close') {
-      const reason = args.slice(1).join(' ').trim();
+            return interaction.reply({
+                content: `Added <@${user.id}> to this ticket.`,
+                allowedMentions: { users: [user.id] },
+            });
+        }
 
-      await message.reply(
-        'Saving the transcript and closing this ticket...'
-      );
+        // REMOVE
+        if (sub === 'remove') {
+            if (user.id === ticket.openerId) {
+                return reply(
+                    interaction,
+                    'You cannot remove the person who opened the ticket.'
+                );
+            }
 
-      // Adapt the message into the context expected by closeTicket.
-      const context = {
-        channel: message.channel,
-        channelId: message.channel.id,
-        guild: message.guild,
-        guildId: message.guild.id,
-        client: message.client,
-        user: message.author,
-        member: message.member,
-      };
+            await interaction.channel.permissionOverwrites.delete(
+                user.id
+            );
 
-      return closeTicket(context, ticket, reason);
-    }
+            return interaction.reply({
+                content: `Removed <@${user.id}> from this ticket.`,
+                allowedMentions: { parse: [] },
+            });
+        }
+    },
 
-    // ADD / REMOVE
-    const user = await resolveUser(message, args[1]);
+    // ========================================
+    // PREFIX COMMAND
+    // ========================================
 
-    if (!user) {
-      return message.reply(
-        `Usage: \`^ticket ${sub} @user\`\nYou can also provide a user ID.`
-      );
-    }
-
-    // ADD
-    if (sub === 'add') {
-      await message.channel.permissionOverwrites.edit(user.id, {
-        ViewChannel: true,
-        SendMessages: true,
-        ReadMessageHistory: true,
-        AttachFiles: true,
-      });
-
-      return message.reply({
-        content: `Added <@${user.id}> to this ticket.`,
-        allowedMentions: { users: [user.id] },
-      });
-    }
-
-    // REMOVE
-    if (sub === 'remove') {
-      if (user.id === ticket.openerId) {
-        return message.reply(
-          'You cannot remove the person who opened the ticket.'
+    async prefix(message, args) {
+        const ticket = findByChannel(
+            loadTickets(),
+            message.channel.id
         );
-      }
 
-      await message.channel.permissionOverwrites.delete(user.id);
+        if (!ticket) {
+            return message.reply(
+                'Use this command inside an open ticket.'
+            );
+        }
 
-      return message.reply({
-        content: `Removed <@${user.id}> from this ticket.`,
-        allowedMentions: { parse: [] },
-      });
-    }
-  },
+        const sub = args[0]?.toLowerCase();
+
+        if (!sub || !['add', 'remove', 'close'].includes(sub)) {
+            return message.reply(
+                'Ticket commands:\n' +
+                '`^ticket add @user`\n' +
+                '`^ticket remove @user`\n' +
+                '`^ticket close [reason]`'
+            );
+        }
+
+        if (!hasTicketPermission(
+            message.member,
+            ticket,
+            sub,
+            message.author.id
+        )) {
+            return message.reply(
+                'You do not have permission to do that.'
+            );
+        }
+
+        // CLOSE
+        if (sub === 'close') {
+            const reason = args.slice(1).join(' ').trim();
+
+            await message.reply(
+                'Saving the transcript and closing this ticket...'
+            );
+
+            const context = {
+                channel: message.channel,
+                channelId: message.channel.id,
+                guild: message.guild,
+                guildId: message.guild.id,
+                client: message.client,
+                user: {
+                    id: message.author.id,
+                    tag: message.author.tag,
+                    username: message.author.username,
+                },
+                member: message.member,
+            };
+
+            return closeTicket(context, ticket, reason);
+        }
+
+        // ADD / REMOVE
+        const user = await resolveUser(message, args[1]);
+
+        if (!user) {
+            return message.reply(
+                `Usage: \`^ticket ${sub} @user\`\n` +
+                'You can also provide a user ID.'
+            );
+        }
+
+        // ADD
+        if (sub === 'add') {
+            await message.channel.permissionOverwrites.edit(
+                user.id,
+                {
+                    ViewChannel: true,
+                    SendMessages: true,
+                    ReadMessageHistory: true,
+                    AttachFiles: true,
+                }
+            );
+
+            return message.reply({
+                content: `Added <@${user.id}> to this ticket.`,
+                allowedMentions: { users: [user.id] },
+            });
+        }
+
+        // REMOVE
+        if (sub === 'remove') {
+            if (user.id === ticket.openerId) {
+                return message.reply(
+                    'You cannot remove the person who opened the ticket.'
+                );
+            }
+
+            await message.channel.permissionOverwrites.delete(
+                user.id
+            );
+
+            return message.reply({
+                content: `Removed <@${user.id}> from this ticket.`,
+                allowedMentions: { parse: [] },
+            });
+        }
+    },
 };

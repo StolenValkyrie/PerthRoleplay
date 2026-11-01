@@ -13,7 +13,6 @@ const {
 } = require('discord.js');
 
 const config = require('../config');
-
 const { card, isAdmin, randomId } = require('../lib/helpers');
 
 const {
@@ -27,10 +26,7 @@ const {
 } = require('../lib/tickets');
 
 const IMAGE = 'https://cdn.phototourl.com/member/2026-10-31-5e095074-b010-4df0-b13c-16bcb4ce3c9b.png';
-
 const V2 = MessageFlags.IsComponentsV2;
-
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const cleanName = s =>
     String(s)
@@ -64,7 +60,7 @@ const textInput = (id, label, style, {
     );
 
 // ==========================================
-// OPENING TICKETS
+// OPEN TICKET MODALS
 // ==========================================
 
 function openModal(key) {
@@ -75,7 +71,11 @@ function openModal(key) {
         for (const ticket of Object.values(tickets)) {
             if (ticket.status !== 'open') continue;
 
-            if (!interaction.guild.channels.cache.has(ticket.channelId)) {
+            const channel = await interaction.guild.channels
+                .fetch(ticket.channelId)
+                .catch(() => null);
+
+            if (!channel) {
                 Object.assign(ticket, {
                     status: 'closed',
                     closedBy: interaction.client.user.id,
@@ -85,7 +85,10 @@ function openModal(key) {
                 });
 
                 changed = true;
-            } else if (ticket.openerId === interaction.user.id) {
+                continue;
+            }
+
+            if (ticket.openerId === interaction.user.id) {
                 if (changed) saveTickets(tickets);
 
                 return reply(
@@ -97,9 +100,15 @@ function openModal(key) {
 
         if (changed) saveTickets(tickets);
 
+        const type = types[key];
+
+        if (!type) {
+            return reply(interaction, 'Invalid ticket type.');
+        }
+
         const modal = new ModalBuilder()
             .setCustomId(`ticket_modal_${key}`)
-            .setTitle(`${types[key].label} Support`)
+            .setTitle(`${type.label} Support`)
             .addComponents(
                 textInput(
                     'reason',
@@ -150,126 +159,138 @@ function createTicket(key) {
             flags: MessageFlags.Ephemeral,
         });
 
-        const type = types[key];
+        try {
+            const type = types[key];
 
-        if (!type) {
-            return interaction.editReply('Invalid ticket type.');
-        }
+            if (!type) {
+                return interaction.editReply('Invalid ticket type.');
+            }
 
-        const roleIds = getRoles(key);
-        const reason = interaction.fields.getTextInputValue('reason');
-        const user = interaction.user;
-        const guild = interaction.guild;
+            const roleIds = getRoles(key);
+            const reason = interaction.fields
+                .getTextInputValue('reason')
+                .trim();
 
-        if (roleIds.length === 0) {
-            console.warn(
-                `[tickets] No roleIds configured for "${key}".`
+            const user = interaction.user;
+            const guild = interaction.guild;
+
+            if (!guild) {
+                return interaction.editReply('This command must be used in a server.');
+            }
+
+            if (roleIds.length === 0) {
+                console.warn(`[tickets] No roleIds configured for "${key}".`);
+            }
+
+            const memberPerms = [
+                PermissionFlagsBits.ViewChannel,
+                PermissionFlagsBits.SendMessages,
+                PermissionFlagsBits.ReadMessageHistory,
+                PermissionFlagsBits.AttachFiles,
+            ];
+
+            const tickets = loadTickets();
+            const id = randomId(prefixFor(key), tickets);
+
+            const channel = await guild.channels.create({
+                name: `${key}-${cleanName(user.username)}`,
+                type: ChannelType.GuildText,
+                parent: config.tickets?.categoryId || undefined,
+                topic: `${type.label} ticket ${id} for ${user.tag} (${user.id})`,
+
+                permissionOverwrites: [
+                    {
+                        id: guild.id,
+                        deny: [PermissionFlagsBits.ViewChannel],
+                    },
+                    {
+                        id: user.id,
+                        allow: memberPerms,
+                    },
+                    {
+                        id: interaction.client.user.id,
+                        allow: [
+                            PermissionFlagsBits.ViewChannel,
+                            PermissionFlagsBits.SendMessages,
+                            PermissionFlagsBits.ReadMessageHistory,
+                            PermissionFlagsBits.ManageChannels,
+                        ],
+                    },
+                    ...roleIds.map(roleId => ({
+                        id: roleId,
+                        allow: memberPerms,
+                    })),
+                ],
+            });
+
+            const now = Math.floor(Date.now() / 1000);
+
+            const pingRoleIds = [
+                ...new Set(
+                    roleIds.filter(roleId =>
+                        /^\d{17,20}$/.test(String(roleId))
+                    )
+                ),
+            ];
+
+            const pingContent = [
+                `<@${user.id}>`,
+                ...pingRoleIds.map(roleId => `<@&${roleId}>`),
+            ].join(' ');
+
+            await channel.send({
+                content: pingContent,
+                allowedMentions: {
+                    parse: [],
+                    users: [user.id],
+                    roles: pingRoleIds,
+                },
+            });
+
+            await channel.send({
+                components: [
+                    card({
+                        top: IMAGE,
+                        text:
+                            `# ${type.label} Support\n` +
+                            `<@${user.id}>, this is your ${type.label} support ticket. ` +
+                            'Please wait for staff to respond to your ticket. ' +
+                            `You opened this ticket because: ${reason}, at <t:${now}:F>.`,
+                        rows: [ticketButtons()],
+                    }),
+                ],
+                flags: V2,
+                allowedMentions: { parse: [] },
+            });
+
+            tickets[id] = {
+                id,
+                type: key,
+                channelId: channel.id,
+                openerId: user.id,
+                openerName: user.username,
+                reason,
+                openedAt: now,
+                status: 'open',
+                claimedBy: null,
+                closedBy: null,
+                closedAt: null,
+                closeReason: null,
+                transcriptSaved: false,
+            };
+
+            saveTickets(tickets);
+
+            return interaction.editReply(
+                `Your ticket has been created: ${channel}`
             );
+        } catch (error) {
+            console.error('[tickets] Ticket creation failed:', error);
+
+            return interaction.editReply(
+                'There was an error creating your ticket. Please contact staff.'
+            ).catch(() => null);
         }
-
-        const memberPerms = [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.SendMessages,
-            PermissionFlagsBits.ReadMessageHistory,
-            PermissionFlagsBits.AttachFiles,
-        ];
-
-        const tickets = loadTickets();
-        const id = randomId(prefixFor(key), tickets);
-
-        const channel = await guild.channels.create({
-            name: `${key}-${cleanName(user.username)}`,
-            type: ChannelType.GuildText,
-            parent: config.tickets.categoryId || undefined,
-
-            topic: `${type.label} ticket ${id} for ${user.tag} (${user.id})`,
-
-            permissionOverwrites: [
-                {
-                    id: guild.id,
-                    deny: [PermissionFlagsBits.ViewChannel],
-                },
-
-                {
-                    id: user.id,
-                    allow: memberPerms,
-                },
-
-                {
-                    id: interaction.client.user.id,
-                    allow: [
-                        PermissionFlagsBits.ViewChannel,
-                        PermissionFlagsBits.SendMessages,
-                        PermissionFlagsBits.ReadMessageHistory,
-                        PermissionFlagsBits.ManageChannels,
-                    ],
-                },
-
-                ...roleIds.map(roleId => ({
-                    id: roleId,
-                    allow: memberPerms,
-                })),
-            ],
-        });
-
-        const now = Math.floor(Date.now() / 1000);
-
-        // Notify the ticket opener and every staff role configured for this type.
-        const pingRoleIds = [...new Set(
-            roleIds.filter(roleId => /^\d{17,20}$/.test(String(roleId)))
-        )];
-
-        const pingContent = [
-            `<@${user.id}>`,
-            ...pingRoleIds.map(roleId => `<@&${roleId}>`),
-        ].join(' ');
-
-        await channel.send({
-            content: pingContent,
-            allowedMentions: {
-                parse: [],
-                users: [user.id],
-                roles: pingRoleIds,
-            },
-        });
-
-        await channel.send({
-            components: [
-                card({
-                    top: IMAGE,
-                    text:
-                        `# ${type.label} Support\n` +
-                        `<@${user.id}>, this is your ${type.label} support ticket. ` +
-                        'Please wait for staff to respond to your ticket. ' +
-                        `You opened this ticket because: ${reason}, at <t:${now}:F>.`,
-                    rows: [ticketButtons()],
-                }),
-            ],
-            flags: V2,
-            allowedMentions: { parse: [] },
-        });
-
-        tickets[id] = {
-            id,
-            type: key,
-            channelId: channel.id,
-            openerId: user.id,
-            openerName: user.username,
-            reason,
-            openedAt: now,
-            status: 'open',
-            claimedBy: null,
-            closedBy: null,
-            closedAt: null,
-            closeReason: null,
-            transcriptSaved: false,
-        };
-
-        saveTickets(tickets);
-
-        return interaction.editReply(
-            `Your ticket has been created: ${channel}`
-        );
     };
 }
 
@@ -305,7 +326,7 @@ function withTicket(handler, { staffOnly = true } = {}) {
 }
 
 // ==========================================
-// CLAIM TICKET
+// CLAIM
 // ==========================================
 
 const claim = withTicket(async (interaction, ticket, tickets) => {
@@ -326,7 +347,7 @@ const claim = withTicket(async (interaction, ticket, tickets) => {
 });
 
 // ==========================================
-// UNCLAIM TICKET
+// UNCLAIM
 // ==========================================
 
 const unclaim = withTicket(async (interaction, ticket, tickets) => {
@@ -354,7 +375,7 @@ const unclaim = withTicket(async (interaction, ticket, tickets) => {
 });
 
 // ==========================================
-// CLOSE TICKET
+// CLOSE BUTTON
 // ==========================================
 
 const closeButton = withTicket(
@@ -376,6 +397,10 @@ const closeButton = withTicket(
     { staffOnly: false }
 );
 
+// ==========================================
+// CLOSE MODAL
+// ==========================================
+
 const closeModal = withTicket(
     async (interaction, ticket) => {
         const reason = interaction.fields
@@ -392,7 +417,7 @@ const closeModal = withTicket(
 );
 
 // ==========================================
-// RENAME TICKET
+// RENAME BUTTON
 // ==========================================
 
 const renameButton = withTicket(async interaction => {
@@ -410,6 +435,10 @@ const renameButton = withTicket(async interaction => {
 
     return interaction.showModal(modal);
 });
+
+// ==========================================
+// RENAME MODAL
+// ==========================================
 
 const renameModal = withTicket(async interaction => {
     const name = cleanName(
@@ -448,7 +477,49 @@ for (const key of Object.keys(types)) {
 }
 
 // ==========================================
-// SLASH COMMAND
+// SEND SUPPORT PANEL
+// ==========================================
+
+async function sendPanel(channel) {
+    const entries = Object.entries(types);
+
+    if (entries.length === 0) {
+        return { error: 'No ticket types are configured in config.js.' };
+    }
+
+    if (entries.length > 5) {
+        return {
+            error: 'Discord supports a maximum of 5 ticket buttons per row. Configure 5 or fewer ticket types.',
+        };
+    }
+
+    const row = new ActionRowBuilder().addComponents(
+        entries.map(([key, type]) =>
+            new ButtonBuilder()
+                .setCustomId(`ticket_open_${key}`)
+                .setLabel(type.label)
+                .setStyle(ButtonStyle.Secondary)
+        )
+    );
+
+    await channel.send({
+        components: [
+            card({
+                top: IMAGE,
+                text:
+                    '# Support\n' +
+                    '> Use the support tickets below to get help from our staff team!',
+                rows: [row],
+            }),
+        ],
+        flags: V2,
+    });
+
+    return { success: true };
+}
+
+// ==========================================
+// COMMAND EXPORT
 // ==========================================
 
 module.exports = {
@@ -460,45 +531,29 @@ module.exports = {
         ),
 
     async execute(interaction) {
-        const entries = Object.entries(types);
+        const result = await sendPanel(interaction.channel);
 
-        if (entries.length === 0) {
-            return reply(
-                interaction,
-                'No ticket types are configured in config.js.'
-            );
+        if (result.error) {
+            return reply(interaction, result.error);
         }
-
-        if (entries.length > 5) {
-            return reply(
-                interaction,
-                'Discord supports a maximum of 5 buttons per action row. Please configure 5 or fewer ticket types.'
-            );
-        }
-
-        const row = new ActionRowBuilder().addComponents(
-            entries.map(([key, type]) =>
-                new ButtonBuilder()
-                    .setCustomId(`ticket_open_${key}`)
-                    .setLabel(type.label)
-                    .setStyle(ButtonStyle.Secondary)
-            )
-        );
-
-        await interaction.channel.send({
-            components: [
-                card({
-                    top: IMAGE,
-                    text:
-                        '# Support\n' +
-                        '> Use the support tickets below to get help from our staff team!',
-                    rows: [row],
-                }),
-            ],
-            flags: V2,
-        });
 
         return reply(interaction, 'Support panel sent.');
+    },
+
+    async prefix(message) {
+        if (!isAdmin(message.member)) {
+            return message.reply(
+                'You need Administrator permission to use this command.'
+            );
+        }
+
+        const result = await sendPanel(message.channel);
+
+        if (result.error) {
+            return message.reply(result.error);
+        }
+
+        return message.reply('Support panel sent.');
     },
 
     buttons,
