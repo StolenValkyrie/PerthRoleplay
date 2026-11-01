@@ -10,8 +10,6 @@ const {
     typeLabel,
 } = require('../lib/tickets');
 
-const { loadTranscript } = require('../lib/tickets');
-
 // ==========================================
 // PERMISSION CHECK
 // ==========================================
