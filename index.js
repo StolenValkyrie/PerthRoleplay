@@ -17,9 +17,7 @@ const {
 const { BOT_TOKEN, CLIENT_ID, GUILD_ID } = process.env;
 
 if (!BOT_TOKEN || !CLIENT_ID || !GUILD_ID) {
-  console.error(
-    'Missing BOT_TOKEN, CLIENT_ID or GUILD_ID in environment variables.'
-  );
+  console.error('Missing BOT_TOKEN, CLIENT_ID or GUILD_ID in environment variables.');
   process.exit(1);
 }
 
@@ -48,18 +46,16 @@ client.modals = new Collection();
 client.selects = new Collection();
 
 // ==========================================
+// STAFF ROLE CONFIGURATION
+// ==========================================
+
+const STAFF_ROLE_ID = '1566066035210067984';
+
+// ==========================================
 // BOT STATUS ROTATION
 // ==========================================
 
 const STATUS_INTERVAL = 10 * 1000;
-
-const STAFF_ROLE_IDS = [
-  '1566066035189354590', // General
-  '1566066035189354589', // Supervisory
-  '1566066035189354588', // Management
-  '1566066035189354591', // Directive
-  '1566066035210067984', // All Staff
-];
 
 const listeningStatuses = [
   '📸・Mod Scene 1',
@@ -70,7 +66,7 @@ const listeningStatuses = [
 ];
 
 let statusIndex = 0;
-let statusInterval = null;
+let statusInterval;
 
 async function updateBotStatus() {
   try {
@@ -81,13 +77,19 @@ async function updateBotStatus() {
       return;
     }
 
+    // Fetch all server members to ensure the role count is accurate.
+    const members = await guild.members.fetch();
+
     const totalMembers = guild.memberCount;
 
-    // Count unique non-bot members with at least one staff role.
-    const staffCount = guild.members.cache.filter(member =>
+    // Count EVERY non-bot member with this exact role.
+    const staffCount = members.filter(member =>
       !member.user.bot &&
-      STAFF_ROLE_IDS.some(roleId => member.roles.cache.has(roleId))
+      member.roles.cache.has(STAFF_ROLE_ID)
     ).size;
+
+    console.log(`[status] Total members: ${totalMembers}`);
+    console.log(`[status] Staff role ${STAFF_ROLE_ID}: ${staffCount}`);
 
     const statuses = [
       {
@@ -117,6 +119,7 @@ async function updateBotStatus() {
     console.log(`[status] Updated: ${currentStatus.name}`);
 
     statusIndex = (statusIndex + 1) % statuses.length;
+
   } catch (error) {
     console.error('[status] Failed to update:', error);
   }
@@ -177,32 +180,29 @@ client.once(Events.ClientReady, async (c) => {
     const guild = c.guilds.cache.get(GUILD_ID);
 
     if (!guild) {
-      console.error('[status] Could not find configured server.');
-    } else {
-      // Fetch members once at startup for accurate staff counts.
-      if (process.env.STATS_INTENTS === 'true') {
-        await guild.members.fetch();
-        console.log('[status] Members cached successfully.');
-      } else {
-        console.warn(
-          '[status] STATS_INTENTS is not enabled. Staff count may be incomplete.'
-        );
-      }
+      console.error('[status] Configured server not found.');
+    } else if (process.env.STATS_INTENTS === 'true') {
+      // Fetch members once at startup.
+      await guild.members.fetch();
+
+      console.log('[status] Members cached successfully.');
 
       await updateBotStatus();
 
-      if (statusInterval) clearInterval(statusInterval);
+      statusInterval = setInterval(updateBotStatus, STATUS_INTERVAL);
+    } else {
+      console.error(
+        '[status] STATS_INTENTS must be true to fetch all members and count staff.'
+      );
 
+      // Other statuses can still rotate, but staff count may be incomplete.
+      await updateBotStatus();
       statusInterval = setInterval(updateBotStatus, STATUS_INTERVAL);
     }
   } catch (error) {
     console.error('[status] Startup error:', error);
 
-    // Still start status rotation if member fetching fails.
     await updateBotStatus();
-
-    if (statusInterval) clearInterval(statusInterval);
-
     statusInterval = setInterval(updateBotStatus, STATUS_INTERVAL);
   }
 
@@ -212,7 +212,6 @@ client.once(Events.ClientReady, async (c) => {
     console.error('Failed to register commands:', error);
   }
 
-  // Run command startup handlers.
   for (const command of client.commands.values()) {
     try {
       await command.ready?.(c);
@@ -226,7 +225,7 @@ client.once(Events.ClientReady, async (c) => {
 });
 
 // ==========================================
-// INTERACTION ERROR HANDLING
+// INTERACTION HANDLING
 // ==========================================
 
 async function run(interaction, handler) {
@@ -248,13 +247,8 @@ async function run(interaction, handler) {
   }
 }
 
-// Finds a handler by exact customId or prefix before ":".
 const findHandler = (map, customId) =>
   map.get(customId) ?? map.get(customId.split(':')[0]);
-
-// ==========================================
-// INTERACTION HANDLER
-// ==========================================
 
 client.on(Events.InteractionCreate, async interaction => {
   let handler;
@@ -283,7 +277,7 @@ require('./stats-push')(client, {
   secret: process.env.BOT_PUSH_SECRET,
   guildId: GUILD_ID,
   staffRoleIds: [
-    '1566066035210067984',
+    STAFF_ROLE_ID,
   ],
 });
 
