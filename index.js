@@ -25,16 +25,9 @@ if (!BOT_TOKEN || !CLIENT_ID || !GUILD_ID) {
 // INTENTS
 // ==========================================
 
-const intents = [GatewayIntentBits.Guilds];
-
-if (process.env.STATS_INTENTS === 'true') {
-  intents.push(
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildPresences
-  );
-}
-
-const client = new Client({ intents });
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds],
+});
 
 // ==========================================
 // COLLECTIONS
@@ -44,12 +37,6 @@ client.commands = new Collection();
 client.buttons = new Collection();
 client.modals = new Collection();
 client.selects = new Collection();
-
-// ==========================================
-// STAFF ROLE CONFIGURATION
-// ==========================================
-
-const STAFF_ROLE_ID = '1566066035210067984';
 
 // ==========================================
 // BOT STATUS ROTATION
@@ -66,30 +53,12 @@ const listeningStatuses = [
 ];
 
 let statusIndex = 0;
-let statusInterval;
 
-async function updateBotStatus() {
+function updateBotStatus() {
   try {
     const guild = client.guilds.cache.get(GUILD_ID);
 
-    if (!guild) {
-      console.error('[status] Guild not found.');
-      return;
-    }
-
-    // Fetch all server members to ensure the role count is accurate.
-    const members = await guild.members.fetch();
-
-    const totalMembers = guild.memberCount;
-
-    // Count EVERY non-bot member with this exact role.
-    const staffCount = members.filter(member =>
-      !member.user.bot &&
-      member.roles.cache.has(STAFF_ROLE_ID)
-    ).size;
-
-    console.log(`[status] Total members: ${totalMembers}`);
-    console.log(`[status] Staff role ${STAFF_ROLE_ID}: ${staffCount}`);
+    const totalMembers = guild?.memberCount ?? 0;
 
     const statuses = [
       {
@@ -97,7 +66,7 @@ async function updateBotStatus() {
         type: ActivityType.Watching,
       },
       {
-        name: `${staffCount} Staff`,
+        name: '4 Staff',
         type: ActivityType.Watching,
       },
       {
@@ -119,9 +88,8 @@ async function updateBotStatus() {
     console.log(`[status] Updated: ${currentStatus.name}`);
 
     statusIndex = (statusIndex + 1) % statuses.length;
-
   } catch (error) {
-    console.error('[status] Failed to update:', error);
+    console.error('[status] Failed:', error);
   }
 }
 
@@ -176,35 +144,9 @@ async function registerCommands() {
 client.once(Events.ClientReady, async (c) => {
   console.log(`Logged in as ${c.user.tag}`);
 
-  try {
-    const guild = c.guilds.cache.get(GUILD_ID);
-
-    if (!guild) {
-      console.error('[status] Configured server not found.');
-    } else if (process.env.STATS_INTENTS === 'true') {
-      // Fetch members once at startup.
-      await guild.members.fetch();
-
-      console.log('[status] Members cached successfully.');
-
-      await updateBotStatus();
-
-      statusInterval = setInterval(updateBotStatus, STATUS_INTERVAL);
-    } else {
-      console.error(
-        '[status] STATS_INTENTS must be true to fetch all members and count staff.'
-      );
-
-      // Other statuses can still rotate, but staff count may be incomplete.
-      await updateBotStatus();
-      statusInterval = setInterval(updateBotStatus, STATUS_INTERVAL);
-    }
-  } catch (error) {
-    console.error('[status] Startup error:', error);
-
-    await updateBotStatus();
-    statusInterval = setInterval(updateBotStatus, STATUS_INTERVAL);
-  }
+  // Start statuses immediately, independently of member fetching.
+  updateBotStatus();
+  setInterval(updateBotStatus, STATUS_INTERVAL);
 
   try {
     await registerCommands();
@@ -276,9 +218,7 @@ require('./stats-push')(client, {
   url: 'https://perthwebsite.stolenvalkyrie.workers.dev/api/bot/stats',
   secret: process.env.BOT_PUSH_SECRET,
   guildId: GUILD_ID,
-  staffRoleIds: [
-    STAFF_ROLE_ID,
-  ],
+  staffRoleIds: [],
 });
 
 // ==========================================
