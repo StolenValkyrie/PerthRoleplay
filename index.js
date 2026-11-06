@@ -1,263 +1,91 @@
-
-require("dotenv").config();
-
+require('dotenv').config();
+const fs = require('node:fs');
+const path = require('node:path');
 const {
   Client,
-  GatewayIntentBits,
   Collection,
+  Events,
+  GatewayIntentBits,
+  MessageFlags,
   REST,
   Routes,
-  Events,
-  MessageFlags,
-} = require("discord.js");
+} = require('discord.js');
 
-const fs = require("node:fs");
-const path = require("node:path");
+const { BOT_TOKEN, CLIENT_ID, GUILD_ID } = process.env;
 
-// ==========================================
-// CONFIGURATION
-// ==========================================
-
-const PREFIX = "^";
-
-const TOKEN = process.env.BOT_TOKEN?.trim();
-const CLIENT_ID = process.env.CLIENT_ID?.trim();
-const GUILD_ID = process.env.GUILD_ID?.trim();
-
-console.log("[ENV CHECK]", {
-  tokenLoaded: !!TOKEN,
-  clientIdLoaded: !!CLIENT_ID,
-  guildIdLoaded: !!GUILD_ID,
-});
-
-if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
-  console.error(
-    "[ENV ERROR] Missing BOT_TOKEN, CLIENT_ID, or GUILD_ID."
-  );
+if (!BOT_TOKEN || !CLIENT_ID || !GUILD_ID) {
+  console.error('Missing BOT_TOKEN, CLIENT_ID or GUILD_ID in environment variables.');
   process.exit(1);
 }
 
-// ==========================================
-// CLIENT
-// ==========================================
-
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-  ],
-});
-
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 client.commands = new Collection();
 client.buttons = new Collection();
 client.modals = new Collection();
+client.selects = new Collection();
 
-// ==========================================
-// COMMAND LOADER
-// ==========================================
-
-const commandsPath = path.join(__dirname, "commands");
-
-if (!fs.existsSync(commandsPath)) {
-  throw new Error("The commands folder was not found.");
-}
-
-const commandFiles = fs
-  .readdirSync(commandsPath)
-  .filter((file) => file.endsWith(".js"));
-
-console.log(`[COMMAND LOADER] Found ${commandFiles.length} commands.`);
-
-for (const file of commandFiles) {
-  const filePath = path.join(commandsPath, file);
-
-  try {
-    delete require.cache[require.resolve(filePath)];
-
-    const command = require(filePath);
-
-    if (!command.data?.name || typeof command.execute !== "function") {
-      console.warn(`[COMMAND] Skipped invalid command: ${file}`);
-      continue;
-    }
-
+// Load every file in /commands
+const commandsPath = path.join(__dirname, 'commands');
+for (const file of fs.readdirSync(commandsPath).filter((f) => f.endsWith('.js'))) {
+  const command = require(path.join(commandsPath, file));
+  if ('data' in command && 'execute' in command) {
     client.commands.set(command.data.name, command);
-
-    // Register buttons
-    if (command.buttons) {
-      const buttons = command.buttons instanceof Map
-        ? command.buttons
-        : Object.entries(command.buttons);
-
-      for (const [customId, handler] of buttons) {
-        client.buttons.set(customId, handler);
-      }
-    }
-
-    // Register modals
-    if (command.modals) {
-      const modals = command.modals instanceof Map
-        ? command.modals
-        : Object.entries(command.modals);
-
-      for (const [customId, handler] of modals) {
-        client.modals.set(customId, handler);
-      }
-    }
-
-    console.log(`[LOADED] /${command.data.name}`);
-  } catch (error) {
-    console.error(`[COMMAND LOAD ERROR] ${file}:`, error);
+    // Commands can also export button and modal handlers: { customId: handler }
+    for (const [id, handler] of Object.entries(command.buttons ?? {})) client.buttons.set(id, handler);
+    for (const [id, handler] of Object.entries(command.modals ?? {})) client.modals.set(id, handler);
+    for (const [id, handler] of Object.entries(command.selects ?? {})) client.selects.set(id, handler);
+  } else {
+    console.warn(`[WARN] ${file} is missing "data" or "execute".`);
   }
 }
 
-console.log(
-  `[COMMAND LOADER] Successfully loaded ${client.commands.size} commands.`
-);
-
-// ==========================================
-// SLASH COMMAND REGISTRATION
-// ==========================================
-
-const rest = new REST({ version: "10" }).setToken(TOKEN);
-
-async function registerSlashCommands() {
-  const commands = client.commands.map((command) =>
-    command.data.toJSON()
-  );
-
-  await rest.put(
-    Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-    { body: commands }
-  );
-
-  console.log(`[SLASH] Registered ${commands.length} commands.`);
+// Register slash commands to ONE server only (updates show instantly)
+async function registerCommands() {
+  const rest = new REST().setToken(BOT_TOKEN);
+  const body = client.commands.map((c) => c.data.toJSON());
+  await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body });
+  console.log(`Registered ${body.length} command(s) to guild ${GUILD_ID}.`);
 }
 
-// ==========================================
-// INTERACTION HANDLER
-// ==========================================
+client.once(Events.ClientReady, async (c) => {
+  console.log(`Logged in as ${c.user.tag}`);
+  try {
+    await registerCommands();
+  } catch (err) {
+    console.error('Failed to register commands:', err);
+  }
+  // Let commands run start-up code (e.g. resume a running session)
+  for (const command of client.commands.values()) {
+    try {
+      await command.ready?.(c);
+    } catch (err) {
+      console.error(`ready() failed for /${command.data.name}:`, err);
+    }
+  }
+});
+
+async function run(interaction, handler) {
+  try {
+    await handler(interaction);
+  } catch (err) {
+    console.error(err);
+    const msg = { content: 'Something went wrong. Please try again.', flags: MessageFlags.Ephemeral };
+    if (interaction.replied || interaction.deferred) await interaction.followUp(msg).catch(() => {});
+    else await interaction.reply(msg).catch(() => {});
+  }
+}
+
+// Finds a handler by exact customId, or by the part before the first ":" (so "tl_nav:2:0" matches "tl_nav")
+const findHandler = (map, customId) => map.get(customId) ?? map.get(customId.split(':')[0]);
 
 client.on(Events.InteractionCreate, async (interaction) => {
-  try {
-    if (interaction.isChatInputCommand()) {
-      const command = client.commands.get(interaction.commandName);
+  let handler;
+  if (interaction.isChatInputCommand()) handler = client.commands.get(interaction.commandName)?.execute;
+  else if (interaction.isButton()) handler = findHandler(client.buttons, interaction.customId);
+  else if (interaction.isStringSelectMenu()) handler = findHandler(client.selects, interaction.customId);
+  else if (interaction.isModalSubmit()) handler = findHandler(client.modals, interaction.customId);
 
-      if (!command) return;
-
-      await command.execute(interaction);
-      return;
-    }
-
-    if (interaction.isButton()) {
-      const handler = client.buttons.get(interaction.customId);
-
-      if (handler) {
-        await handler(interaction);
-      }
-
-      return;
-    }
-
-    if (interaction.isModalSubmit()) {
-      const handler = client.modals.get(interaction.customId);
-
-      if (handler) {
-        await handler(interaction);
-      }
-    }
-  } catch (error) {
-    console.error("[INTERACTION ERROR]", error);
-
-    if (!interaction.isRepliable()) return;
-
-    const response = {
-      content: "Something went wrong while processing this interaction.",
-      flags: MessageFlags.Ephemeral,
-    };
-
-    if (interaction.deferred || interaction.replied) {
-      await interaction.followUp(response).catch(() => {});
-    } else {
-      await interaction.reply(response).catch(() => {});
-    }
-  }
+  if (handler) await run(interaction, handler);
 });
 
-// ==========================================
-// PREFIX COMMAND HANDLER
-// ==========================================
-
-client.on(Events.MessageCreate, async (message) => {
-  if (message.author.bot || !message.guild) return;
-  if (!message.content.startsWith(PREFIX)) return;
-
-  const content = message.content.slice(PREFIX.length).trim();
-
-  if (!content) return;
-
-  const args = content.split(/\s+/);
-  const commandName = args.shift().toLowerCase();
-
-  const command = client.commands.get(commandName);
-
-  if (!command) return;
-
-  if (typeof command.prefix !== "function") {
-    await message.reply(
-      `The \`${commandName}\` command does not support prefix usage yet.`
-    );
-    return;
-  }
-
-  try {
-    await command.prefix(message, args);
-  } catch (error) {
-    console.error(`[PREFIX ERROR: ${commandName}]`, error);
-
-    await message.reply(
-      "Something went wrong while running that command."
-    ).catch(() => {});
-  }
-});
-
-// ==========================================
-// READY EVENT
-// ==========================================
-
-client.once(Events.ClientReady, async (readyClient) => {
-  console.log(`[READY] Logged in as ${readyClient.user.tag}`);
-
-  for (const [name, command] of client.commands) {
-    if (typeof command.ready === "function") {
-      try {
-        await command.ready(client);
-        console.log(`[READY] Started ${name}`);
-      } catch (error) {
-        console.error(`[READY ERROR: ${name}]`, error);
-      }
-    }
-  }
-});
-
-// ==========================================
-// START BOT
-// ==========================================
-
-async function startBot() {
-  try {
-    console.log("[STARTUP] Registering slash commands...");
-
-    await registerSlashCommands();
-
-    console.log("[STARTUP] Connecting to Discord...");
-
-    await client.login(TOKEN);
-  } catch (error) {
-    console.error("[STARTUP ERROR]", error);
-    process.exit(1);
-  }
-}
-
-startBot();
+client.login(BOT_TOKEN);
