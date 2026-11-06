@@ -1,4 +1,5 @@
 const { MessageFlags, SlashCommandBuilder } = require('discord.js');
+const config = require('../config');
 const { card, isStaff, loadStore, saveStore, randomId } = require('../lib/helpers');
 
 const IMAGE = 'https://cdn.phototourl.com/member/2026-10-31-9a4e3d76-c307-4814-a4d0-145e330ae6b0.png';
@@ -18,6 +19,17 @@ module.exports = {
     const user = interaction.options.getUser('user');
     const reason = interaction.options.getString('reason');
 
+    // Where the infraction message goes (falls back to this channel if no ID is set)
+    const channel = config.infractionChannelId
+      ? await interaction.client.channels.fetch(config.infractionChannelId).catch(() => null)
+      : interaction.channel;
+    if (!channel) {
+      return interaction.reply({
+        content: 'I could not find the infractions channel. Check infractionChannelId in config.js and that I can see that channel.',
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+
     const container = card({
       top: IMAGE,
       text:
@@ -26,7 +38,7 @@ module.exports = {
         'Please make sure to follow staff rules, and avoid infractions.',
     });
 
-    await interaction.channel.send({
+    await channel.send({
       components: [container],
       flags: MessageFlags.IsComponentsV2,
       allowedMentions: { users: [user.id] },
@@ -44,6 +56,6 @@ module.exports = {
     };
     saveStore('infractions', records);
 
-    await interaction.reply({ content: `Infraction posted (${id}).`, flags: MessageFlags.Ephemeral });
+    await interaction.reply({ content: `Infraction posted in ${channel} (${id}).`, flags: MessageFlags.Ephemeral });
   },
 };

@@ -1,4 +1,5 @@
 const { MessageFlags, SlashCommandBuilder } = require('discord.js');
+const config = require('../config');
 const { card, isStaff, loadStore, saveStore, randomId } = require('../lib/helpers');
 
 const IMAGE = 'https://cdn.phototourl.com/member/2026-10-31-a77aaffa-78fb-46f2-912a-815d7eb3a409.png';
@@ -22,6 +23,17 @@ module.exports = {
     const reason = interaction.options.getString('reason');
     const giveRole = interaction.options.getBoolean('give_role') ?? false;
 
+    // Where the promotion message goes (falls back to this channel if no ID is set)
+    const channel = config.promotionChannelId
+      ? await interaction.client.channels.fetch(config.promotionChannelId).catch(() => null)
+      : interaction.channel;
+    if (!channel) {
+      return interaction.reply({
+        content: 'I could not find the promotions channel. Check promotionChannelId in config.js and that I can see that channel.',
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+
     let note = '';
     if (giveRole) {
       try {
@@ -41,7 +53,7 @@ module.exports = {
         'Congratulations! We commend you for your efforts and are pleased to see you here!',
     });
 
-    await interaction.channel.send({
+    await channel.send({
       components: [container],
       flags: MessageFlags.IsComponentsV2,
       allowedMentions: { users: [user.id] },
@@ -61,6 +73,6 @@ module.exports = {
     };
     saveStore('promotions', records);
 
-    await interaction.reply({ content: `Promotion posted (${id}).${note}`, flags: MessageFlags.Ephemeral });
+    await interaction.reply({ content: `Promotion posted in ${channel} (${id}).${note}`, flags: MessageFlags.Ephemeral });
   },
 };
