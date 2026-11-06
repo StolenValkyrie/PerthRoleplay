@@ -1,6 +1,8 @@
+
 require('dotenv').config();
 const fs = require('node:fs');
 const path = require('node:path');
+
 const {
   Client,
   Collection,
@@ -15,19 +17,30 @@ const {
 const { BOT_TOKEN, CLIENT_ID, GUILD_ID } = process.env;
 
 if (!BOT_TOKEN || !CLIENT_ID || !GUILD_ID) {
-  console.error('Missing BOT_TOKEN, CLIENT_ID or GUILD_ID in environment variables.');
+  console.error(
+    'Missing BOT_TOKEN, CLIENT_ID or GUILD_ID in environment variables.'
+  );
   process.exit(1);
 }
 
-// Accurate website stats and staff counts need the Server Members intent.
-// Enable it in Discord Developer Portal before setting STATS_INTENTS=true.
+// ==========================================
+// INTENTS
+// ==========================================
+
 const intents = [GatewayIntentBits.Guilds];
 
 if (process.env.STATS_INTENTS === 'true') {
-  intents.push(GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildPresences);
+  intents.push(
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildPresences
+  );
 }
 
 const client = new Client({ intents });
+
+// ==========================================
+// COLLECTIONS
+// ==========================================
 
 client.commands = new Collection();
 client.buttons = new Collection();
@@ -38,13 +51,14 @@ client.selects = new Collection();
 // BOT STATUS ROTATION
 // ==========================================
 
-const STATUS_INTERVAL = 10 * 1000; // 10 seconds
+const STATUS_INTERVAL = 10 * 1000;
 
 const STAFF_ROLE_IDS = [
   '1566066035189354590', // General
   '1566066035189354589', // Supervisory
   '1566066035189354588', // Management
   '1566066035189354591', // Directive
+  '1566066035210067984', // All Staff
 ];
 
 const listeningStatuses = [
@@ -56,20 +70,22 @@ const listeningStatuses = [
 ];
 
 let statusIndex = 0;
+let statusInterval = null;
 
 async function updateBotStatus() {
   try {
     const guild = client.guilds.cache.get(GUILD_ID);
 
-    if (!guild) return;
-
-    // Fetch all members to calculate accurate staff counts.
-    await guild.members.fetch();
+    if (!guild) {
+      console.error('[status] Guild not found.');
+      return;
+    }
 
     const totalMembers = guild.memberCount;
 
-    // Count unique members who have at least one staff role.
+    // Count unique non-bot members with at least one staff role.
     const staffCount = guild.members.cache.filter(member =>
+      !member.user.bot &&
       STAFF_ROLE_IDS.some(roleId => member.roles.cache.has(roleId))
     ).size;
 
@@ -98,24 +114,26 @@ async function updateBotStatus() {
       type: currentStatus.type,
     });
 
-    console.log(`Bot status updated: ${currentStatus.name}`);
+    console.log(`[status] Updated: ${currentStatus.name}`);
 
     statusIndex = (statusIndex + 1) % statuses.length;
   } catch (error) {
-    console.error('Failed to update bot status:', error);
+    console.error('[status] Failed to update:', error);
   }
 }
 
-// Load every file in /commands
+// ==========================================
+// LOAD COMMANDS
+// ==========================================
+
 const commandsPath = path.join(__dirname, 'commands');
 
-for (const file of fs.readdirSync(commandsPath).filter((f) => f.endsWith('.js'))) {
+for (const file of fs.readdirSync(commandsPath).filter(f => f.endsWith('.js'))) {
   const command = require(path.join(commandsPath, file));
 
   if ('data' in command && 'execute' in command) {
     client.commands.set(command.data.name, command);
 
-    // Commands can also export button and modal handlers.
     for (const [id, handler] of Object.entries(command.buttons ?? {})) {
       client.buttons.set(id, handler);
     }
@@ -132,10 +150,13 @@ for (const file of fs.readdirSync(commandsPath).filter((f) => f.endsWith('.js'))
   }
 }
 
-// Register slash commands to ONE server only (updates show instantly)
+// ==========================================
+// REGISTER SLASH COMMANDS
+// ==========================================
+
 async function registerCommands() {
   const rest = new REST().setToken(BOT_TOKEN);
-  const body = client.commands.map((c) => c.data.toJSON());
+  const body = client.commands.map(command => command.data.toJSON());
 
   await rest.put(
     Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
@@ -145,35 +166,74 @@ async function registerCommands() {
   console.log(`Registered ${body.length} command(s) to guild ${GUILD_ID}.`);
 }
 
+// ==========================================
+// BOT READY
+// ==========================================
+
 client.once(Events.ClientReady, async (c) => {
   console.log(`Logged in as ${c.user.tag}`);
 
-  // Start rotating bot statuses.
-  await updateBotStatus();
+  try {
+    const guild = c.guilds.cache.get(GUILD_ID);
 
-  setInterval(updateBotStatus, STATUS_INTERVAL);
+    if (!guild) {
+      console.error('[status] Could not find configured server.');
+    } else {
+      // Fetch members once at startup for accurate staff counts.
+      if (process.env.STATS_INTENTS === 'true') {
+        await guild.members.fetch();
+        console.log('[status] Members cached successfully.');
+      } else {
+        console.warn(
+          '[status] STATS_INTENTS is not enabled. Staff count may be incomplete.'
+        );
+      }
+
+      await updateBotStatus();
+
+      if (statusInterval) clearInterval(statusInterval);
+
+      statusInterval = setInterval(updateBotStatus, STATUS_INTERVAL);
+    }
+  } catch (error) {
+    console.error('[status] Startup error:', error);
+
+    // Still start status rotation if member fetching fails.
+    await updateBotStatus();
+
+    if (statusInterval) clearInterval(statusInterval);
+
+    statusInterval = setInterval(updateBotStatus, STATUS_INTERVAL);
+  }
 
   try {
     await registerCommands();
-  } catch (err) {
-    console.error('Failed to register commands:', err);
+  } catch (error) {
+    console.error('Failed to register commands:', error);
   }
 
-  // Let commands run start-up code (e.g. resume a running session)
+  // Run command startup handlers.
   for (const command of client.commands.values()) {
     try {
       await command.ready?.(c);
-    } catch (err) {
-      console.error(`ready() failed for /${command.data.name}:`, err);
+    } catch (error) {
+      console.error(
+        `ready() failed for /${command.data.name}:`,
+        error
+      );
     }
   }
 });
 
+// ==========================================
+// INTERACTION ERROR HANDLING
+// ==========================================
+
 async function run(interaction, handler) {
   try {
     await handler(interaction);
-  } catch (err) {
-    console.error(err);
+  } catch (error) {
+    console.error(error);
 
     const msg = {
       content: 'Something went wrong. Please try again.',
@@ -188,11 +248,15 @@ async function run(interaction, handler) {
   }
 }
 
-// Finds a handler by exact customId, or by the part before the first ":".
+// Finds a handler by exact customId or prefix before ":".
 const findHandler = (map, customId) =>
   map.get(customId) ?? map.get(customId.split(':')[0]);
 
-client.on(Events.InteractionCreate, async (interaction) => {
+// ==========================================
+// INTERACTION HANDLER
+// ==========================================
+
+client.on(Events.InteractionCreate, async interaction => {
   let handler;
 
   if (interaction.isChatInputCommand()) {
@@ -205,23 +269,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
     handler = findHandler(client.modals, interaction.customId);
   }
 
-  if (handler) await run(interaction, handler);
+  if (handler) {
+    await run(interaction, handler);
+  }
 });
 
 // ==========================================
 // WEBSITE STATS INTEGRATION
 // ==========================================
 
-// Send live server stats to the Perth Roleplay website every 5 minutes.
 require('./stats-push')(client, {
   url: 'https://perthwebsite.stolenvalkyrie.workers.dev/api/bot/stats',
   secret: process.env.BOT_PUSH_SECRET,
   guildId: GUILD_ID,
   staffRoleIds: [
-    '1566066035189354590', // General
-    '1566066035189354589', // Supervisory
-    '1566066035189354588', // Management
-    '1566066035189354591', // Directive
+    '1566066035210067984',
   ],
 });
 
