@@ -18,7 +18,15 @@ if (!BOT_TOKEN || !CLIENT_ID || !GUILD_ID) {
   process.exit(1);
 }
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+// Accurate website stats (staff + online counts) need the Server Members and Presence intents.
+// Turn both on in the Developer Portal (Bot > Privileged Gateway Intents) BEFORE setting STATS_INTENTS=true,
+// otherwise the bot will refuse to log in.
+const intents = [GatewayIntentBits.Guilds];
+if (process.env.STATS_INTENTS === 'true') {
+  intents.push(GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildPresences);
+}
+
+const client = new Client({ intents });
 client.commands = new Collection();
 client.buttons = new Collection();
 client.modals = new Collection();
@@ -86,6 +94,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
   else if (interaction.isModalSubmit()) handler = findHandler(client.modals, interaction.customId);
 
   if (handler) await run(interaction, handler);
+});
+
+// Send live server stats to the Perth Roleplay website every 5 minutes
+require('./stats-push')(client, {
+  url: 'https://perthwebsite.stolenvalkyrie.workers.dev/api/bot/stats',
+  secret: process.env.BOT_PUSH_SECRET,
+  guildId: GUILD_ID,
+  staffRoleIds: [
+    '1566066035189354590', // General
+    '1566066035189354589', // Supervisory
+    '1566066035189354588', // Management
+    '1566066035189354591', // Directive
+  ],
 });
 
 client.login(BOT_TOKEN);
